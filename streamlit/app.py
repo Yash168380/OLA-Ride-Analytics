@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import os
 
 # -----------------------------
 # Page Config
@@ -10,74 +11,81 @@ st.set_page_config(
 )
 
 # -----------------------------
-# Load Cleaned Data
+# Load Data (SAFE PATH)
 # -----------------------------
 @st.cache_data
 def load_data():
-    return pd.read_csv("../data/OLA_Cleaned_Data.csv")
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_path = os.path.join(base_dir, "..", "data", "OLA_Cleaned_Data.csv")
+    return pd.read_csv(data_path)
 
-df = load_data()
+try:
+    df = load_data()
+except Exception as e:
+    st.error("❌ CSV file load nahi ho rahi")
+    st.code(str(e))
+    st.stop()
+
+# -----------------------------
+# Date Column FIX (IMPORTANT)
+# -----------------------------
+df["Date"] = pd.to_datetime(df["Date"])
 
 # -----------------------------
 # Sidebar Filters
 # -----------------------------
 st.sidebar.header("🔍 Filters")
 
-# Vehicle Type Filter
 vehicle_type = st.sidebar.selectbox(
     "Select Vehicle Type",
-    ["All"] + sorted(df["Vehicle_Type"].unique())
+    ["All"] + sorted(df["Vehicle_Type"].dropna().unique())
 )
 
-# Booking Status Filter
 booking_status = st.sidebar.selectbox(
     "Select Booking Status",
-    ["All"] + sorted(df["Booking_Status"].unique())
+    ["All"] + sorted(df["Booking_Status"].dropna().unique())
 )
 
-# Pickup Location / City Filter
 city = st.sidebar.selectbox(
     "Select Pickup Location",
-    ["All"] + sorted(df["Pickup_Location"].unique())
-)
-
-# Date range filter
-df["Date"] = pd.to_datetime(df["Date"])
-min_date = df["Date"].min()
-max_date = df["Date"].max()
-
-date_range = st.sidebar.date_input(
-    "Select Date Range",
-    value=[min_date, max_date],
-    min_value=min_date,
-    max_value=max_date
+    ["All"] + sorted(df["Pickup_Location"].dropna().unique())
 )
 
 # -----------------------------
-# Handle single or range date input
+# Date Filter (ULTRA SAFE)
 # -----------------------------
-if isinstance(date_range, list) or isinstance(date_range, tuple):
-    if len(date_range) == 2:
-        start_date, end_date = date_range
+date_input = st.sidebar.date_input(
+    "Select Date / Date Range",
+    value=(df["Date"].min().date(), df["Date"].max().date())
+)
+
+# 🔒 HARD SAFE CONVERSION
+if isinstance(date_input, (list, tuple)):
+    if len(date_input) == 2:
+        start_date = pd.to_datetime(date_input[0])
+        end_date = pd.to_datetime(date_input[1])
     else:
-        start_date = end_date = date_range[0]
+        start_date = end_date = pd.to_datetime(date_input[0])
 else:
-    start_date = end_date = date_range
+    start_date = end_date = pd.to_datetime(date_input)
 
 # -----------------------------
 # Apply Filters
 # -----------------------------
 filtered_df = df.copy()
+
 if vehicle_type != "All":
     filtered_df = filtered_df[filtered_df["Vehicle_Type"] == vehicle_type]
+
 if booking_status != "All":
     filtered_df = filtered_df[filtered_df["Booking_Status"] == booking_status]
+
 if city != "All":
     filtered_df = filtered_df[filtered_df["Pickup_Location"] == city]
 
 filtered_df = filtered_df[
-    (filtered_df["Date"] >= pd.to_datetime(start_date)) &
-    (filtered_df["Date"] <= pd.to_datetime(end_date))
+    (filtered_df["Date"] >= start_date) &
+    (filtered_df["Date"] <= end_date)
 ]
 
 # -----------------------------
@@ -86,55 +94,36 @@ filtered_df = filtered_df[
 st.title("🚖 OLA Ride Analytics Dashboard")
 
 # -----------------------------
-# KPI Metrics
+# KPIs
 # -----------------------------
-col1, col2, col3, col4, col5 = st.columns(5)
+c1, c2, c3, c4, c5 = st.columns(5)
 
-total_rides = filtered_df.shape[0]
-total_revenue = filtered_df["Booking_Value"].sum()
-avg_distance = filtered_df["Ride_Distance"].mean()
-avg_driver_rating = filtered_df["Driver_Ratings"].mean()
-avg_customer_rating = filtered_df["Customer_Rating"].mean()
-
-col1.metric("Total Rides", f"{total_rides/1000:.2f} K")
-col2.metric("Total Revenue", f"₹ {total_revenue/1e6:.2f} M")
-col3.metric("Avg Distance (km)", f"{avg_distance:.2f}")
-col4.metric("Avg Driver Rating", f"{avg_driver_rating:.2f}")
-col5.metric("Avg Customer Rating", f"{avg_customer_rating:.2f}")
+c1.metric("Total Rides", f"{len(filtered_df):,}")
+c2.metric("Total Revenue", f"₹ {filtered_df['Booking_Value'].sum():,.0f}")
+c3.metric("Avg Distance (km)", f"{filtered_df['Ride_Distance'].mean():.2f}")
+c4.metric("Avg Driver Rating", f"{filtered_df['Driver_Ratings'].mean():.2f}")
+c5.metric("Avg Customer Rating", f"{filtered_df['Customer_Rating'].mean():.2f}")
 
 # -----------------------------
-# Booking Status Distribution
+# Charts
 # -----------------------------
 st.subheader("📊 Booking Status Distribution")
 st.bar_chart(filtered_df["Booking_Status"].value_counts())
 
-# -----------------------------
-# Vehicle Type Distribution
-# -----------------------------
 st.subheader("🚗 Vehicle Type Distribution")
 st.bar_chart(filtered_df["Vehicle_Type"].value_counts())
 
-# -----------------------------
-# Revenue Trend Over Time
-# -----------------------------
 st.subheader("📈 Revenue Trend Over Time")
-revenue_trend = filtered_df.groupby("Date")["Booking_Value"].sum()
-st.line_chart(revenue_trend)
+st.line_chart(filtered_df.groupby("Date")["Booking_Value"].sum())
 
-# -----------------------------
-# Driver Ratings Distribution
-# -----------------------------
 st.subheader("⭐ Driver Ratings Distribution")
 st.bar_chart(filtered_df["Driver_Ratings"].value_counts().sort_index())
 
-# -----------------------------
-# Customer Ratings Distribution
-# -----------------------------
 st.subheader("⭐ Customer Ratings Distribution")
 st.bar_chart(filtered_df["Customer_Rating"].value_counts().sort_index())
 
 # -----------------------------
-# Footer / Info
+# Footer
 # -----------------------------
 st.markdown("---")
 st.markdown(
